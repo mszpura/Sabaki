@@ -54,6 +54,8 @@ class Sabaki extends EventEmitter {
       representedFilename: null,
       gameIndex: 0,
       gameTrees: [emptyTree],
+      gameDirectories: [],
+      gameTreeDirectories: {},
       gameCurrents: [{}],
       treePosition: emptyTree.root.id,
 
@@ -659,6 +661,8 @@ class Sabaki extends EventEmitter {
         representedFilename: null,
         gameIndex: 0,
         gameTrees,
+        gameDirectories: [],
+        gameTreeDirectories: {},
         gameCurrents: gameTrees.map((_) => ({})),
         boardTransformation: '',
       })

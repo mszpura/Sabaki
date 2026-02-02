@@ -31,8 +31,18 @@ export default class DrawerManager extends Component {
     }
 
     this.handleGameTreesChange = (evt) => {
-      let newGameTrees = evt.gameTrees
       let {gameTrees, gameCurrents, gameIndex} = this.props
+      let newGameTrees = evt.gameTrees || gameTrees
+      let newGameDirectories = evt.gameDirectories || this.props.gameDirectories
+      let newGameTreeDirectories =
+        evt.gameTreeDirectories || this.props.gameTreeDirectories
+
+      let treeIds = new Set(newGameTrees.map((tree) => String(tree.id)))
+      newGameTreeDirectories = Object.fromEntries(
+        Object.entries(newGameTreeDirectories || {}).filter(([id]) =>
+          treeIds.has(id),
+        ),
+      )
       let tree = gameTrees[gameIndex]
       let newIndex = newGameTrees.findIndex((t) => t.root.id === tree.root.id)
 
@@ -46,6 +56,8 @@ export default class DrawerManager extends Component {
 
       sabaki.setState({
         gameTrees: newGameTrees,
+        gameDirectories: newGameDirectories,
+        gameTreeDirectories: newGameTreeDirectories,
         gameCurrents: newGameTrees.map((tree, i) => {
           let oldIndex = gameTrees.findIndex((t) => t.root.id === tree.root.id)
           if (oldIndex < 0) return {}
@@ -104,6 +116,8 @@ export default class DrawerManager extends Component {
         show: openDrawer === 'gamechooser',
         gameTrees,
         gameIndex,
+        gameDirectories: this.props.gameDirectories,
+        gameTreeDirectories: this.props.gameTreeDirectories,
 
         onItemClick: this.handleGameSelect,
         onChange: this.handleGameTreesChange,

@@ -50,6 +50,7 @@ class GameListItem extends Component {
 
   render({
     tree,
+    directoryName,
     left,
     top,
     draggable,
@@ -61,6 +62,8 @@ class GameListItem extends Component {
     let {gameName, eventName, blackName, blackRank, whiteName, whiteRank} =
       gameInfo
     let name = gameName || eventName || ''
+    let directoryLabel = directoryName ? `${directoryName} / ` : ''
+    let displayName = `${directoryLabel}${name}`.trim()
 
     return h(
       'li',
@@ -83,7 +86,7 @@ class GameListItem extends Component {
           onDragOver: this.handleDragOver,
         },
 
-        h('span', {title: name}, name),
+        h('span', {title: displayName}, displayName),
 
         h(MiniGoban, {
           board: getPreviewBoard(tree),
@@ -109,6 +112,7 @@ export default class GameChooserDrawer extends Component {
       insertBefore: -1,
       animation: false,
       filterText: '',
+      directoryFilterId: 'all',
     }
 
     this.handleFilterTextChange = (evt) =>
@@ -118,13 +122,95 @@ export default class GameChooserDrawer extends Component {
 
     this.handleCloseButtonClick = () => sabaki.closeDrawer()
 
+    this.getDirectoryId = (tree) => {
+      let {gameTreeDirectories = {}} = this.props
+      let directoryId = gameTreeDirectories[String(tree.id)]
+
+      return directoryId == null ? null : directoryId
+    }
+
+    this.getDirectoryName = (tree) => {
+      let {gameDirectories = [], gameTreeDirectories = {}} = this.props
+      let directoryId = gameTreeDirectories[String(tree.id)]
+      let directory = gameDirectories.find((dir) => dir.id === directoryId)
+
+      return directory ? directory.name : null
+    }
+
+    this.handleDirectoryFilterChange = (evt) => {
+      this.setState({directoryFilterId: evt.currentTarget.value})
+    }
+
+    this.handleCreateDirectory = async () => {
+      let name = await dialog.showInputBox(t('Enter directory name'))
+      if (name == null) return null
+
+      name = name.trim()
+      if (name === '') return null
+
+      let {gameDirectories = [], onChange = helper.noop} = this.props
+      let newDirectory = {id: helper.getId(), name}
+      let newGameDirectories = [...gameDirectories, newDirectory]
+
+      onChange({gameDirectories: newGameDirectories})
+
+      sabaki.flashInfoOverlay(t('Directory created'))
+
+      return newDirectory.id
+    }
+
+    this.updateTreeDirectory = (tree, directoryId) => {
+      let {gameTreeDirectories = {}, onChange = helper.noop} = this.props
+      let newGameTreeDirectories = {...gameTreeDirectories}
+
+      if (directoryId == null) {
+        delete newGameTreeDirectories[String(tree.id)]
+      } else {
+        newGameTreeDirectories[String(tree.id)] = directoryId
+      }
+
+      onChange({gameTreeDirectories: newGameTreeDirectories})
+    }
+
     this.handleListScroll = (evt) => {
       this.setState({scrollTop: evt.currentTarget.scrollTop})
     }
 
     this.handleItemContextMenu = (evt) => {
+      let {gameDirectories = [], gameTreeDirectories = {}} = this.props
+      let currentDirectoryId = gameTreeDirectories[String(evt.tree.id)] || null
+
+      let directorySubmenu = [
+        {
+          label: t('No Directory'),
+          type: 'radio',
+          checked: currentDirectoryId == null,
+          click: () => this.updateTreeDirectory(evt.tree, null),
+        },
+        ...(gameDirectories.length > 0 ? [{type: 'separator'}] : []),
+        ...gameDirectories.map((directory) => ({
+          label: directory.name,
+          type: 'radio',
+          checked: directory.id === currentDirectoryId,
+          click: () => this.updateTreeDirectory(evt.tree, directory.id),
+        })),
+        {type: 'separator'},
+        {
+          label: t('New Directory…'),
+          click: async () => {
+            let newId = await this.handleCreateDirectory()
+            if (newId != null) this.updateTreeDirectory(evt.tree, newId)
+          },
+        },
+      ]
+
       helper.popupMenu(
         [
+          {
+            label: t('Move to Directory'),
+            submenu: directorySubmenu,
+          },
+          {type: 'separator'},
           {
             label: t('&Remove Game'),
             click: async () => {
@@ -138,10 +224,19 @@ export default class GameChooserDrawer extends Component {
               )
                 return
 
-              let {gameTrees, onChange = helper.noop} = this.props
+              let {
+                gameTrees,
+                gameTreeDirectories = {},
+                onChange = helper.noop,
+              } = this.props
               let index = gameTrees.indexOf(evt.tree)
+              let newGameTreeDirectories = {...gameTreeDirectories}
+              delete newGameTreeDirectories[String(evt.tree.id)]
 
-              onChange({gameTrees: gameTrees.filter((_, i) => i !== index)})
+              onChange({
+                gameTrees: gameTrees.filter((_, i) => i !== index),
+                gameTreeDirectories: newGameTreeDirectories,
+              })
             },
           },
           {
@@ -159,8 +254,19 @@ export default class GameChooserDrawer extends Component {
               )
                 return
 
-              let {onChange = helper.noop} = this.props
-              onChange({gameTrees: [evt.tree]})
+              let {gameTreeDirectories = {}, onChange = helper.noop} =
+                this.props
+              let directoryId = gameTreeDirectories[String(evt.tree.id)] || null
+              let newGameTreeDirectories = {}
+
+              if (directoryId != null) {
+                newGameTreeDirectories[String(evt.tree.id)] = directoryId
+              }
+
+              onChange({
+                gameTrees: [evt.tree],
+                gameTreeDirectories: newGameTreeDirectories,
+              })
             },
           },
         ],
@@ -233,6 +339,12 @@ export default class GameChooserDrawer extends Component {
           },
         },
         {
+          label: t('Add &New Directory…'),
+          click: async () => {
+            await this.handleCreateDirectory()
+          },
+        },
+        {
           label: t('Add &Existing Files…'),
           click: async () => {
             let result = await dialog.showOpenDialog({
@@ -284,6 +396,36 @@ export default class GameChooserDrawer extends Component {
         sabaki.setBusy(false)
       }
 
+      let sortByDirectory = () => {
+        sabaki.setBusy(true)
+
+        let {
+          gameTrees,
+          gameDirectories = [],
+          gameTreeDirectories = {},
+          onChange = helper.noop,
+        } = this.props
+        let directoryNames = new Map(
+          gameDirectories.map((directory) => [directory.id, directory.name]),
+        )
+
+        let getDirectoryName = (tree) =>
+          directoryNames.get(gameTreeDirectories[String(tree.id)]) || ''
+
+        let newGameTrees = gameTrees.slice().sort((a, b) => {
+          let dirA = getDirectoryName(a).toLowerCase()
+          let dirB = getDirectoryName(b).toLowerCase()
+          if (dirA !== dirB) return dirA.localeCompare(dirB)
+
+          let nameA = gametree.getGameInfo(a).gameName || ''
+          let nameB = gametree.getGameInfo(b).gameName || ''
+          return nameA.toLowerCase().localeCompare(nameB.toLowerCase())
+        })
+
+        onChange({gameTrees: newGameTrees})
+        sabaki.setBusy(false)
+      }
+
       let template = [
         {label: t('&Black Player'), click: sortWith(gamesort.byPlayerBlack)},
         {label: t('&White Player'), click: sortWith(gamesort.byPlayerWhite)},
@@ -291,6 +433,7 @@ export default class GameChooserDrawer extends Component {
         {label: t('White Ran&k'), click: sortWith(gamesort.byWhiteRank)},
         {label: t('Game &Name'), click: sortWith(gamesort.byGameName)},
         {label: t('Game &Event'), click: sortWith(gamesort.byEvent)},
+        {label: t('Game &Directory'), click: sortByDirectory},
         {label: t('&Date'), click: sortWith(gamesort.byDate)},
         {
           label: t('Number of &Moves'),
@@ -406,6 +549,7 @@ export default class GameChooserDrawer extends Component {
     {show, gameTrees, gameIndex},
     {
       filterText,
+      directoryFilterId,
       animation,
       scrollTop,
       insertBefore,
@@ -418,13 +562,30 @@ export default class GameChooserDrawer extends Component {
 
     this.shownGameTrees = gameTrees
       .map((tree, index) => {
-        return [tree, index]
+        return [
+          tree,
+          index,
+          this.getDirectoryName(tree),
+          this.getDirectoryId(tree),
+        ]
       })
-      .filter(([tree]) => {
+      .filter(([tree, , directoryName, directoryId]) => {
         let gameInfo = gametree.getGameInfo(tree)
         let data = Object.keys(gameInfo).map((x) => gameInfo[x])
 
-        return data.join(' ').toLowerCase().includes(filterText.toLowerCase())
+        let matchesFilter =
+          directoryFilterId === 'all' ||
+          (directoryFilterId === 'none' && directoryId == null) ||
+          String(directoryId) === directoryFilterId
+
+        return (
+          matchesFilter &&
+          data
+            .concat([directoryName || ''])
+            .join(' ')
+            .toLowerCase()
+            .includes(filterText.toLowerCase())
+        )
       })
 
     return h(
@@ -490,6 +651,24 @@ export default class GameChooserDrawer extends Component {
         }),
 
         h(
+          'select',
+          {
+            class: 'directory-filter',
+            value: directoryFilterId,
+            onChange: this.handleDirectoryFilterChange,
+          },
+          h('option', {value: 'all'}, t('All Directories')),
+          h('option', {value: 'none'}, t('Unassigned')),
+          (this.props.gameDirectories || []).map((directory) =>
+            h(
+              'option',
+              {value: String(directory.id), key: directory.id},
+              directory.name,
+            ),
+          ),
+        ),
+
+        h(
           'div',
           {
             ref: (el) => (this.gamesListElement = el),
@@ -504,7 +683,7 @@ export default class GameChooserDrawer extends Component {
           h(
             'ol',
             {},
-            this.shownGameTrees.map(([tree, index], i) => {
+            this.shownGameTrees.map(([tree, index, directoryName], i) => {
               let row = this.getRowFromIndex(i)
               let itemTop = row * itemHeight + 10
               let itemLeft = (i - row * rowCount) * itemWidth + 10
@@ -522,6 +701,7 @@ export default class GameChooserDrawer extends Component {
                     item == null ? null : item.element),
                 key: tree.id,
                 tree,
+                directoryName,
                 top: itemTop,
                 left: itemLeft,
                 draggable: filterText === '',
